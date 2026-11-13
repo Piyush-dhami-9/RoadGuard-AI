@@ -1,8 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
+
+
+def utc_now() -> datetime:
+    # The column is timezone-naive; values are always UTC, set here rather than by the database session.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Inspection(Base):
@@ -10,19 +15,22 @@ class Inspection(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     image_path: Mapped[str] = mapped_column(String(500))
     annotated_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now, server_default=func.now())
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     damage_count: Mapped[int] = mapped_column(Integer, default=0)
     overall_severity: Mapped[str] = mapped_column(String(20), default="Low")
     priority_score: Mapped[float] = mapped_column(Float, default=0)
+    inference_mode: Mapped[str] = mapped_column(String(20), default="unknown", server_default="unknown")
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     damages: Mapped[list["Damage"]] = relationship(back_populates="inspection", cascade="all, delete-orphan")
 
 
 class Damage(Base):
     __tablename__ = "damages"
     id: Mapped[int] = mapped_column(primary_key=True)
-    inspection_id: Mapped[int] = mapped_column(ForeignKey("inspections.id", ondelete="CASCADE"))
+    inspection_id: Mapped[int] = mapped_column(ForeignKey("inspections.id", ondelete="CASCADE"), index=True)
     class_name: Mapped[str] = mapped_column("class", String(40))
     confidence: Mapped[float] = mapped_column(Float)
     area: Mapped[float] = mapped_column(Float)
