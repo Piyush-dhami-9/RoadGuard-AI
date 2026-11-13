@@ -16,4 +16,16 @@ How to use all of this: [docs/MODEL_TRAINING.md](../docs/MODEL_TRAINING.md).
 
 Without usable weights the backend runs the DEMO detector (`opencv-threshold-demo`): it thresholds dark pixels and assigns damage classes by position in a list. It exists so the workflow can be exercised end to end. Its output is labelled DEMO everywhere and must not be used for decisions.
 
-The backend's trained-model path still expects YOLO **segmentation** weights and refuses detection weights at startup with an explanatory message. Converting that path to detection, and reading class names from the model, is the remaining part of Phase 3. Until then, do not point `MODEL_WEIGHTS` at the detection weights: in `auto` mode the API would report the model as unavailable instead of running the demo.
+## Using trained weights in the application
+
+The backend loads YOLO11 **detection** weights with `INFERENCE_MODE=yolo` (or `auto` when the file exists). Place the file at `model/weights/roadguard-yolo11-rdd2022.pt`, keep the `.json` from training beside it, and see the README section "Enabling YOLO mode".
+
+At startup the backend checks the weights and refuses them, with a reason in `/health`, when:
+
+- the file is missing or is not a loadable Ultralytics model;
+- it is not a detection model (segmentation, classification, pose and OBB are refused);
+- its class table is not exactly `0 Longitudinal Crack, 1 Transverse Crack, 2 Alligator Crack, 3 Pothole`, which also rules out generic pretrained checkpoints such as `weights/pretrained/yolo11n.pt`;
+- its training record marks it as a smoke test;
+- it cannot complete a test prediction on the selected device.
+
+In none of these cases does the application fall back to the demo detector.

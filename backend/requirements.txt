@@ -5,7 +5,9 @@ asyncpg==0.30.0
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 opencv-python-headless==4.10.0.84
-numpy==2.2.1
+# Ultralytics 8.3.55 requires numpy<2 on macOS; Linux (Docker) keeps the newer pin.
+numpy==2.2.1; sys_platform != "darwin"
+numpy==1.26.4; sys_platform == "darwin"
 reportlab==4.2.5
 ultralytics==8.3.55
 alembic==1.14.0

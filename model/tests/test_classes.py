@@ -32,11 +32,14 @@ def test_names_match_requires_exact_names_in_order():
     assert not names_match({index: f"class{index}" for index in range(80)})
 
 
-def test_application_uses_the_same_display_names():
-    """The backend and dashboard show these names; a renamed class must be renamed everywhere."""
-    backend = (REPO / "backend/app/services/inference.py").read_text()
-    backend_names = ast.literal_eval(re.search(r"^CLASSES = (\[.*\])$", backend, re.M).group(1))
+def test_backend_class_table_is_identical_to_the_training_one():
+    """The backend refuses weights whose class table differs from its own, so the two definitions must agree exactly."""
+    source = (REPO / "backend/app/services/damage_classes.py").read_text()
+    backend_classes = ast.literal_eval(re.search(r"^DAMAGE_CLASSES = (\(.*?^\))", source, re.M | re.S).group(1))
+    assert backend_classes == tuple((item.class_id, item.code, item.name) for item in RDD_CLASSES)
+
+
+def test_dashboard_uses_the_same_display_names():
     dashboard = (REPO / "frontend/src/pages/Dashboard.tsx").read_text()
     dashboard_names = re.findall(r"'([^']+)'", re.search(r"KNOWN_CLASSES = \[(.*)\]", dashboard).group(1))
-    assert sorted(backend_names) == sorted(CLASS_NAMES)
     assert sorted(dashboard_names) == sorted(CLASS_NAMES)

@@ -20,7 +20,8 @@ from .services.report import create_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("roadguard")
-inference = InferenceService(settings.model_weights, settings.inference_mode, settings.app_env)
+inference = InferenceService(settings.weights_path, settings.inference_mode, settings.app_env, settings.inference_device,
+                             settings.confidence_threshold, settings.inference_image_size)
 # Multipart framing adds a little to the file itself; nginx is configured to the same total.
 MAX_BODY_BYTES = settings.max_upload_bytes + 1024 * 1024
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Inspection not found"}}

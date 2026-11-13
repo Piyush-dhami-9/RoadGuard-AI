@@ -8,7 +8,7 @@ UPLOADS = WORKDIR / "uploads"
 
 def test_detect_returns_and_persists_an_inspection(client, uploaded):
     assert uploaded["damage_count"] == len(uploaded["damages"]) == 2
-    assert uploaded["overall_severity"] in {"Low", "Medium", "High"}
+    assert uploaded["overall_severity"] in {"Low", "Medium", "High", "Critical"}
     assert 0 <= uploaded["priority_score"] <= 100
     for damage in uploaded["damages"]:
         assert set(damage["bbox"]) == {"x1", "y1", "x2", "y2"}

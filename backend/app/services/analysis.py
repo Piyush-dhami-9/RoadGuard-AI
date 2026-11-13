@@ -4,7 +4,7 @@ from pathlib import Path
 from ..models import Damage, Inspection
 from .images import decode_upload, save_inspection_images
 from .inference import InferenceService
-from .severity import assess, level_for, priority
+from .severity import assess_damage, assess_inspection, coverage, priority
 
 
 @dataclass
@@ -15,19 +15,19 @@ class AnalysisResult:
 
 def analyze_upload(content: bytes, inference: InferenceService) -> AnalysisResult:
     image = decode_upload(content)
-    detections, overlay = inference.detect(image)
-    surface_area = float(image.shape[0] * image.shape[1])
-    scored = [assess(d.area, d.width, d.length, surface_area) for d in detections]
-    max_score = max((item.score for item in scored), default=0)
-    top_confidence = max((d.confidence for d in detections), default=0)
-    image_path, annotated_path = save_inspection_images(image, overlay)
+    height, width = image.shape[:2]
+    detections, annotated = inference.detect(image)
+    scored = [assess_damage(d.class_name, d.bbox["x2"] - d.bbox["x1"], d.bbox["y2"] - d.bbox["y1"], width, height) for d in detections]
+    overall = assess_inspection([item.score for item in scored], coverage([d.bbox for d in detections], width, height))
+    worst = max(zip(scored, detections), key=lambda pair: pair[0].score, default=None)
+    image_path, annotated_path = save_inspection_images(image, annotated)
     status = inference.status
     inspection = Inspection(
         image_path=str(image_path),
         annotated_image_path=str(annotated_path),
         damage_count=len(detections),
-        overall_severity=level_for(max_score),
-        priority_score=priority(max_score, top_confidence, len(detections)),
+        overall_severity=overall.level,
+        priority_score=priority(overall.score, worst[1].confidence) if worst else 0.0,
         inference_mode=status.mode,
         model_name=status.model_name,
         model_version=status.model_version,

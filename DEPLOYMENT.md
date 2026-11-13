@@ -58,7 +58,7 @@ This project is set up for a containerized deployment pattern that matches a typ
 - Frontend static app served by Nginx
 - Backend FastAPI API served by Uvicorn
 - PostgreSQL database for inspection records
-- Optional YOLO model weights mounted at `model/weights/best.pt`
+- Optional YOLO11 detection weights mounted at `model/weights/roadguard-yolo11-rdd2022.pt`
 
 ## Recommended target
 
@@ -123,7 +123,7 @@ Set these in production:
 ```env
 DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>:5432/roadguard
 CORS_ORIGINS=https://<frontend-domain>
-MODEL_WEIGHTS=/app/model/weights/best.pt
+MODEL_WEIGHTS=model/weights/roadguard-yolo11-rdd2022.pt
 APP_ENV=production
 INFERENCE_MODE=trained   # or demo, deliberately; production never falls back silently
 ```
@@ -131,6 +131,7 @@ INFERENCE_MODE=trained   # or demo, deliberately; production never falls back si
 ## Notes
 
 - `VITE_API_URL` is a build-time argument of the frontend image, not a runtime variable.
+- The backend image only contains PyTorch and Ultralytics when built with `--build-arg INSTALL_MODEL_DEPS=true`. `scripts/deploy-azure.sh` builds without them, so the Azure image can run DEMO mode only until that script and a way to deliver the weights to the container are updated.
 - Without trained weights the API serves the DEMO placeholder detector only when
   `INFERENCE_MODE=demo` is set (or outside production). Demo results are labelled and are not AI predictions.
 - If weights are supplied but cannot be loaded, the API reports the model as unavailable; it does not fall back to demo output.

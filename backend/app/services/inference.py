@@ -1,16 +1,25 @@
+"""Chooses and runs the detector: the trained YOLO11 model, or the labelled DEMO placeholder.
+
+The two are never swapped silently. If YOLO is selected and its weights cannot
+be used, the service is 'unavailable' and says why; it does not produce demo output.
+"""
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 import cv2
 import numpy as np
+from .annotation import draw_detections
+from .damage_classes import CLASS_IDS, CLASS_NAMES
+from .yolo_detector import Detection, ModelLoadError, YoloDetector
 
 logger = logging.getLogger(__name__)
-CLASSES = ["Pothole", "Longitudinal Crack", "Transverse Crack", "Alligator Crack"]
+# The placeholder hands out class names in this fixed rotation; it does not recognise anything.
+DEMO_CLASS_CYCLE = ["Pothole", "Longitudinal Crack", "Transverse Crack", "Alligator Crack"]
 DEMO_MODEL_NAME = "opencv-threshold-demo"
 DEMO_MODEL_VERSION = "1"
 DEMO_BANNER = "DEMO - PLACEHOLDER DETECTOR, NOT AN AI PREDICTION"
+YOLO_MODES = ("yolo", "trained")  # 'trained' is the earlier name for the same setting
 
 
 class ModelUnavailableError(RuntimeError):
@@ -19,15 +28,16 @@ class ModelUnavailableError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelStatus:
-    mode: str  # "demo" | "trained" | "unavailable"
+    mode: str                      # what results are produced by: "demo" | "trained" | "unavailable"
     model_name: str | None
     model_version: str | None
     detail: str
-
-
-def load_yolo(weights_path: Path) -> Any:
-    from ultralytics import YOLO
-    return YOLO(str(weights_path))
+    configured_mode: str = "auto"  # the INFERENCE_MODE setting as given
+    loaded: bool = False           # True only when a trained YOLO model is in memory and passed a test prediction
+    task: str | None = None
+    device: str | None = None
+    confidence_threshold: float | None = None
+    classes: dict[int, str] = field(default_factory=dict)
 
 
 def weights_fingerprint(weights_path: Path) -> str:
@@ -38,50 +48,44 @@ def weights_fingerprint(weights_path: Path) -> str:
     return digest.hexdigest()[:12]
 
 
-@dataclass
-class Detection:
-    class_name: str
-    confidence: float
-    bbox: dict[str, float]
-    area: float
-    length: float
-    width: float
-    mask: np.ndarray
-
-
 class InferenceService:
-    def __init__(self, weights: str, mode: str = "auto", app_env: str = "development"):
-        self.model: Any = None
-        self.status = self._initialise(Path(weights), mode, app_env)
+    def __init__(self, weights: str | Path, mode: str = "auto", app_env: str = "development", device: str = "auto",
+                 confidence_threshold: float = 0.25, image_size: int = 640):
+        self.detector: YoloDetector | None = None
+        self.status = self._initialise(Path(weights), mode, app_env, device, confidence_threshold, image_size)
+        if self.status.loaded and confidence_threshold < 0.1:
+            logger.warning("CONFIDENCE_THRESHOLD is %s: very low-confidence boxes will be reported as detections", confidence_threshold)
         log = logger.error if self.status.mode == "unavailable" else logger.info
         log("Inference mode: %s (%s)", self.status.mode.upper(), self.status.detail)
 
-    def _initialise(self, weights_path: Path, mode: str, app_env: str) -> ModelStatus:
-        demo = lambda reason: ModelStatus("demo", DEMO_MODEL_NAME, DEMO_MODEL_VERSION, f"{reason}. Results come from a brightness-threshold placeholder, not a trained model.")
-        unavailable = lambda reason: ModelStatus("unavailable", None, None, reason)
+    def _initialise(self, weights_path: Path, mode: str, app_env: str, device: str, confidence_threshold: float, image_size: int) -> ModelStatus:
+        demo = lambda reason: ModelStatus("demo", DEMO_MODEL_NAME, DEMO_MODEL_VERSION, f"{reason}. Results come from a brightness-threshold placeholder, not a trained model.", configured_mode=mode)
+        unavailable = lambda reason: ModelStatus("unavailable", None, None, reason, configured_mode=mode)
         if mode == "demo":
             return demo("Demo mode selected with INFERENCE_MODE=demo")
-        if not weights_path.is_file():
-            if mode == "auto" and app_env != "production":
+        if mode == "auto" and not weights_path.is_file():
+            if app_env != "production":
                 return demo(f"No trained weights found at {weights_path}")
-            return unavailable(f"A trained model is required but no weights file exists at {weights_path}. Set INFERENCE_MODE=demo to run the placeholder detector deliberately.")
-        # Weights were supplied: from here on a failure is reported, never papered over with demo output.
+            return unavailable(f"No weights file exists at {weights_path} and this is a production environment. Set INFERENCE_MODE=yolo with trained weights, or INFERENCE_MODE=demo to run the placeholder detector deliberately.")
+        # YOLO was selected, or weights were supplied: from here on a failure is reported, never replaced with demo output.
         try:
-            model = load_yolo(weights_path)
-        except Exception as error:
-            logger.exception("Could not load model weights from %s", weights_path)
-            return unavailable(f"Weights at {weights_path} failed to load ({type(error).__name__}: {error})")
-        task = getattr(model, "task", None)
-        if task != "segment":
-            return unavailable(f"Weights at {weights_path} are a '{task}' model; the current pipeline only supports segmentation weights.")
-        self.model = model
-        return ModelStatus("trained", weights_path.name, weights_fingerprint(weights_path), f"Trained YOLO {task} model loaded from {weights_path}")
+            self.detector = YoloDetector(weights_path, device, confidence_threshold, image_size)
+        except ModelLoadError as error:
+            return unavailable(f"YOLO inference is not available: {error} No inspections can be run until this is fixed; set INFERENCE_MODE=demo to use the placeholder detector deliberately.")
+        return ModelStatus(
+            "trained", weights_path.name, weights_fingerprint(weights_path),
+            f"YOLO11 detection model loaded from {weights_path} on device '{self.detector.device}' with confidence threshold {confidence_threshold}",
+            configured_mode=mode, loaded=True, task=self.detector.task, device=self.detector.device,
+            confidence_threshold=confidence_threshold, classes=dict(CLASS_NAMES),
+        )
 
     def detect(self, image: np.ndarray) -> tuple[list[Detection], np.ndarray]:
+        """Detections and the annotated image. Raises ModelUnavailableError when no detector may be used."""
         if self.status.mode == "unavailable":
             raise ModelUnavailableError(self.status.detail)
-        if self.model is not None:
-            return self._yolo(image)
+        if self.detector is not None:
+            detections = self.detector.predict(image)
+            return detections, draw_detections(image, detections)
         detections, overlay = self._demo(image)
         return detections, self._stamp_demo_banner(overlay)
 
@@ -95,19 +99,6 @@ class InferenceService:
         cv2.rectangle(overlay, (0, 0), (width, band), (30, 30, 200), -1)
         cv2.putText(overlay, DEMO_BANNER, (8, band - baseline - 4), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
         return overlay
-
-    def _yolo(self, image: np.ndarray) -> tuple[list[Detection], np.ndarray]:
-        result = self.model(image, verbose=False)[0]
-        detections: list[Detection] = []
-        overlay = image.copy()
-        masks = result.masks.data.cpu().numpy() if result.masks is not None else []
-        for index, box in enumerate(result.boxes):
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            mask = cv2.resize((masks[index] > 0.5).astype(np.uint8), (image.shape[1], image.shape[0])) if index < len(masks) else np.zeros(image.shape[:2], np.uint8)
-            detections.append(Detection(CLASSES[int(box.cls)], float(box.conf), {"x1": x1, "y1": y1, "x2": x2, "y2": y2}, float(mask.sum()), float(max(x2-x1, y2-y1)), float(min(x2-x1, y2-y1)), mask))
-            overlay[mask > 0] = (overlay[mask > 0] * 0.55 + np.array([35, 160, 240]) * 0.45).astype(np.uint8)
-            cv2.rectangle(overlay, (int(x1), int(y1)), (int(x2), int(y2)), (35, 160, 240), 2)
-        return detections, overlay
 
     def _demo(self, image: np.ndarray) -> tuple[list[Detection], np.ndarray]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -125,8 +116,8 @@ class InferenceService:
             x, y, w, h = cv2.boundingRect(contour)
             candidate_mask = np.zeros(gray.shape, np.uint8)
             cv2.drawContours(candidate_mask, [contour], -1, 1, -1)
-            class_name = CLASSES[index % len(CLASSES)]
-            detection = Detection(class_name, round(min(0.96, 0.62 + area / (image.shape[0] * image.shape[1])), 2), {"x1": x, "y1": y, "x2": x+w, "y2": y+h}, area, float(max(w, h)), float(min(w, h)), candidate_mask)
+            class_name = DEMO_CLASS_CYCLE[index % len(DEMO_CLASS_CYCLE)]
+            detection = Detection(CLASS_IDS[class_name], class_name, round(min(0.96, 0.62 + area / (image.shape[0] * image.shape[1])), 2), {"x1": float(x), "y1": float(y), "x2": float(x + w), "y2": float(y + h)}, float(area), float(max(w, h)), float(min(w, h)))
             detections.append(detection)
             color = (44, 190, 246) if index % 2 == 0 else (245, 142, 55)
             overlay[candidate_mask > 0] = (overlay[candidate_mask > 0] * 0.5 + np.array(color) * 0.5).astype(np.uint8)

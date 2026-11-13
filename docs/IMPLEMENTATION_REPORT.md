@@ -193,3 +193,112 @@ The smoke-test numbers are not model results and are recorded here only as evide
 ### Next
 
 Convert the backend inference path to YOLO11 detection (boxes, class names read from the model, confidence threshold, device detection), keeping the DEMO detector until that path is tested with real weights. Then severity (Phase 4).
+
+## YOLO11 detection in the backend (2026-11-14, branch `phase-3-yolo11`)
+
+### Outcome
+
+The backend can load and run YOLO11 detection weights, selected with `INFERENCE_MODE=yolo`. DEMO mode is unchanged in behaviour and still the only thing that produces results today, because **no trained weights exist**. Real AI inference has not been tested: the real Ultralytics code path was exercised with untrained smoke-test weights only, which shows the plumbing works and nothing about detection quality.
+
+### What changed
+
+| Area | Change |
+| --- | --- |
+| Detection engine | New `services/yolo_detector.py`: loads weights once, validates them, predicts under a lock, extracts boxes, class ids, names and confidences, filters by confidence, clips boxes to the image |
+| Classes | New `services/damage_classes.py`: `0 Longitudinal Crack, 1 Transverse Crack, 2 Alligator Crack, 3 Pothole`. Verified against `model/training/classes.py`, the generated `data.yaml` and the class table inside weights produced by the pipeline. The old hardcoded list had a different order and is gone |
+| Annotation | New `services/annotation.py`: labelled boxes per class; an image with no detections is returned unmarked |
+| Segmentation removed | No masks anywhere; the `segment`-only guard is now a `detect`-only guard |
+| Mode selection | `INFERENCE_MODE` accepts `demo`, `yolo`, `auto`, and `trained` as an alias of `yolo`. Never falls back from YOLO to demo |
+| Validation at load | Refused with a reason: missing file, not loadable, `ultralytics` not installed, not a detection model, wrong class table (including generic pretrained checkpoints), smoke-test weights, failed test prediction |
+| Settings | `INFERENCE_DEVICE` (`auto`, `cpu`, `mps`, `cuda:0`), `CONFIDENCE_THRESHOLD` (0.25), `INFERENCE_IMAGE_SIZE` (640). `MODEL_WEIGHTS` now defaults to `model/weights/roadguard-yolo11-rdd2022.pt` and relative paths are also tried from the project root |
+| Health | `model` gains `configured_mode`, `loaded`, `task`, `device`, `confidence_threshold`, `classes`. `inference_mode` keeps its values `demo`, `trained`, `unavailable` |
+| Severity | Rewritten on box size relative to the image, with class, count and coverage; four levels including Critical; priority discounted by confidence. Documented in `docs/SEVERITY.md`. Fixes the resolution dependence found in the audit (M8, M9, M10) |
+| API contract | Unchanged fields; damages gain `class_id`. A YOLO result is reported as `inference_mode: "trained"`, the value the frontend and existing rows already use |
+| Dependencies | `backend/requirements.txt` could not be installed on macOS (`numpy==2.2.1` against Ultralytics' `numpy<2` there). The numpy pin is now per platform; Linux is unchanged |
+
+Not changed: frontend, database schema and migrations, Docker Compose files, Dockerfiles, `.dockerignore` (its earlier pending edit is still pending).
+
+### Tests executed
+
+| Suite | Result |
+| --- | --- |
+| Backend, environment without `ultralytics` | **105 passed** |
+| Backend, environment with `ultralytics` 8.3.55 and numpy 1.26.4 | **105 passed** |
+| Model pipeline | **94 passed** |
+| Frontend | **34 passed**, type-check clean |
+
+Backend tests use scripted model output; none downloads a model or trains. They cover successful loading (once, not per request), missing weights, invalid weights of each kind, class mapping, box extraction, confidence filtering, images with no detections, annotated-image generation, severity, DEMO compatibility, and YOLO errors through the API (503, nothing stored).
+
+Manual checks through the API with a real Ultralytics model object (untrained smoke-run weights, copied without their smoke marker for this purpose):
+
+| Check | Result |
+| --- | --- |
+| Load and predict on CPU, threshold 0.25 | loaded, 0 detections, inspection stored, annotated image and PDF served |
+| Load and predict on Apple MPS (`auto`), threshold 0.001 | loaded, 139 boxes extracted and drawn (noise, as expected from untrained weights) |
+| Weights inside the smoke run folder | refused: smoke-test weights |
+| Generic pretrained `yolo11n.pt` (80 COCO classes) | refused: wrong class table |
+| Missing file | refused: 503 on `/detect`, `/health` degraded |
+| `INFERENCE_MODE=demo` with valid weights present | demo, weights not loaded |
+
+### Not done or not verified
+
+- **No trained model, so no real inference results.** Nothing here measures or implies accuracy.
+- **Docker with the model runtime has not been built or run** (`INSTALL_MODEL_DEPS=true`). The Linux dependency set is unchanged but untested with Ultralytics.
+- **CUDA is untested.**
+- **Compose still pins the weights path** to `/app/model/weights/best.pt` in the development file; weights must be copied to that name for Compose until that file is updated.
+- **Severity constants are uncalibrated assumptions.** Old inspections keep scores from the previous formula and are not comparable with new ones.
+- **A very low `CONFIDENCE_THRESHOLD` turns noise into detections.** The service logs a warning below 0.1 but does not forbid it.
+- The demo detector still assigns classes by rotation; it is labelled, not improved.
+- Inference speed and memory in the 2 GiB Azure container have not been measured.
+
+## Docker integration and configuration hardening (2026-11-14, branch `phase-3-yolo11`)
+
+### What changed
+
+| File | Change |
+| --- | --- |
+| `backend/Dockerfile` | PyTorch is installed only when `INSTALL_MODEL_DEPS=true` (it was installed in every image). Versions pinned: `torch==2.15.0`, `torchvision==0.29.2` (CPU builds), and `opencv-python==4.10.0.84` to match the headless pin. The `model/` source folder is no longer copied into the image. `YOLO_CONFIG_DIR` set to a writable temp path |
+| `docker-compose.yml`, `docker-compose.prod.yml` | `INSTALL_MODEL_DEPS` build argument read from `.env`. `MODEL_WEIGHTS`, `INFERENCE_DEVICE`, `CONFIDENCE_THRESHOLD`, `INFERENCE_IMAGE_SIZE` passed through from `.env` instead of hardcoded. Volume narrowed from `./model` to `./model/weights`, read-only. Backend healthcheck added. Production default mode renamed from `trained` to `yolo` (same meaning). No ports added |
+| `.env.example`, `infra/main.bicep`, `DEPLOYMENT.md` | One weights path everywhere: `model/weights/roadguard-yolo11-rdd2022.pt`. `INSTALL_MODEL_DEPS` documented |
+| `backend/tests/test_deployment_config.py` | New guard tests for the above |
+| `README.md` | Docker instructions for YOLO mode |
+
+`.dockerignore` was not touched; its earlier edit is still pending and was in effect for these builds.
+
+### Docker verification (development M1, Docker 29.8, 3.8 GB allotted, linux/arm64)
+
+Run as a separate Compose project on other ports, with its own database volume, because a RoadGuard stack was already running on the machine.
+
+| Check | Result |
+| --- | --- |
+| Build, `INSTALL_MODEL_DEPS=false` | succeeded in 53 s; 843 MB; no torch, no ultralytics |
+| Build, `INSTALL_MODEL_DEPS=true` | succeeded in about 230 s; 2.46 GB; torch 2.15.0+cpu, ultralytics 8.3.55, numpy 2.2.1, opencv 4.10.0 |
+| Stack start, DEMO mode | db, backend and frontend running; backend healthy; migrations applied to a fresh PostgreSQL 16 |
+| `/health` | `ok`, database `ok`, `inference_mode: demo`; also reachable through the frontend's nginx proxy |
+| Upload through nginx | 200; inspection stored in PostgreSQL with its damage rows; images written to the mounted volume |
+| Annotated and original image, PDF by GET and POST | 200 |
+| 4 MB upload through nginx | 200. This verifies the fix for the 1 MB nginx limit found in the audit |
+| 12.6 MB upload | 413 from nginx and from the API |
+| Empty file, non-image | 400, 415 |
+| Delete | rows and files removed |
+| YOLO mode, weights missing | `/health` degraded, `inference_mode: unavailable`, reason names the path; `/detect` 503; nothing stored; history and frontend still served |
+| YOLO mode on the image without the model runtime | unavailable: `ultralytics` not installed, with the build flag to use |
+| YOLO mode, generic pretrained checkpoint | unavailable: wrong class table |
+| YOLO mode, untrained detection weights (plumbing only) | loaded on `cpu`; predictions run; boxes extracted, drawn, stored; PDF served; 467 MB memory after five requests; model loaded once |
+| Switch back to DEMO | works without rebuilding; earlier rows keep `trained` |
+| Production file, mode unset | `yolo`: unavailable without weights, `/detect` 503 |
+| Production file, `auto`, no weights | unavailable; does not run demo |
+| Production file, `demo` set deliberately | demo |
+
+### Not verified
+
+- **Inference with trained weights**, in or out of Docker. None exist.
+- **linux/amd64 builds.** These builds were native arm64. Azure needs amd64; the pinned PyTorch CPU wheels have not been pulled for that platform here.
+- **The frontend in a browser.**
+
+### Remaining limitations
+
+- Containers run as root.
+- Both Compose files still publish PostgreSQL on 5432 and keep default credential fallbacks; the database healthcheck still hardcodes the user name. Left as they were.
+- The Azure deploy script builds without the model runtime, and Azure has no path for delivering weights or persistent uploads.
+- A local `.env` created from the old example still says `MODEL_WEIGHTS=model/weights/best.pt`; it needs the new value before YOLO mode will find the weights.

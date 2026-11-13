@@ -143,7 +143,7 @@ resource backend 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'MODEL_WEIGHTS'
-              value: '/app/model/weights/best.pt'
+              value: 'model/weights/roadguard-yolo11-rdd2022.pt'
             }
           ]
         }

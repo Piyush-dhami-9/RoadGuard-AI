@@ -11,6 +11,7 @@ os.environ.update(
     UPLOAD_DIR=str(WORKDIR / "uploads"),
     MODEL_WEIGHTS=str(WORKDIR / "absent-weights.pt"),
     INFERENCE_MODE="auto",
+    INFERENCE_DEVICE="cpu",
     APP_ENV="development",
     MAX_UPLOAD_MB="2",
     MAX_IMAGE_MEGAPIXELS="8",
@@ -69,3 +70,42 @@ def uploaded(client, road_jpeg) -> dict:
     response = client.post("/detect", files={"file": ("road.jpg", road_jpeg, "image/jpeg")})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+class FakeYolo:
+    """Stands in for an Ultralytics model: same attributes and predict() signature, scripted output."""
+    task = "detect"
+
+    def __init__(self, boxes: list[tuple] = (), names: dict | None = None, task: str = "detect"):
+        from app.services.damage_classes import CLASS_NAMES
+        self.boxes = list(boxes)  # (x1, y1, x2, y2, confidence, class_id)
+        self.names = dict(CLASS_NAMES) if names is None else names
+        self.task = task
+        self.calls: list[dict] = []
+
+    def predict(self, source, conf, imgsz, device, verbose):
+        from types import SimpleNamespace
+        self.calls.append({"shape": source.shape, "conf": conf, "imgsz": imgsz, "device": device})
+        rows = np.array(self.boxes, dtype=float).reshape(-1, 6)
+        return [SimpleNamespace(boxes=SimpleNamespace(xyxy=rows[:, :4], conf=rows[:, 4], cls=rows[:, 5]))]
+
+
+@pytest.fixture
+def weights_file():
+    path = WORKDIR / "roadguard-test-weights.pt"
+    path.write_bytes(b"placeholder bytes - the loader is replaced in these tests")
+    yield path
+    path.unlink(missing_ok=True)
+    path.with_suffix(".json").unlink(missing_ok=True)
+
+
+@pytest.fixture
+def fake_yolo(monkeypatch):
+    """Make the loader return a scripted model. Returns a function: fake_yolo(boxes=[...], **attributes) -> FakeYolo."""
+    from app.services import yolo_detector
+
+    def install(boxes: list[tuple] = (), **attributes) -> FakeYolo:
+        model = FakeYolo(boxes, **attributes)
+        monkeypatch.setattr(yolo_detector, "load_ultralytics_model", lambda path: model)
+        return model
+    return install

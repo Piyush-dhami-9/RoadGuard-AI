@@ -2,7 +2,7 @@
 
 RoadGuard's model is a **YOLO11 object-detection** model trained on RDD2022. RDD2022 annotations are bounding boxes, so segmentation is not used anywhere in this pipeline.
 
-> **Status:** the pipeline exists and has been run end to end as a smoke test. **No model has been trained.** There are no accuracy figures to report. The application still runs its labelled DEMO detector, and cannot load detection weights until the backend inference step of Phase 3 is done.
+> **Status:** the pipeline exists and has been run end to end as a smoke test. **No model has been trained.** There are no accuracy figures to report. The backend can load detection weights (`INFERENCE_MODE=yolo`), but until a full training run produces them the application runs its labelled DEMO detector.
 
 All commands run from the repository root.
 
@@ -205,4 +205,4 @@ python -m pytest model/tests
 - RDD2022 images are mostly forward-facing vehicle or motorbike views, plus drone images from China. Accuracy on other viewpoints must be measured separately.
 - Class imbalance is not corrected. In the Czech subset 62% of images have no supported damage and potholes are rare.
 - XML is parsed with Python's standard library; only use annotation files from a source you trust.
-- The backend does not yet load these weights. Its trained-model path still expects segmentation and refuses detection weights at startup rather than misusing them.
+- The backend loads these weights with `INFERENCE_MODE=yolo`, and refuses smoke-test weights. That integration has been exercised with untrained weights only, so it shows the plumbing works, not that detections are any good.

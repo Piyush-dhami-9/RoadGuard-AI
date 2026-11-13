@@ -19,20 +19,36 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        # true adds PyTorch (CPU) and Ultralytics; required for INFERENCE_MODE=yolo
+        INSTALL_MODEL_DEPS: ${INSTALL_MODEL_DEPS:-false}
     environment:
       DATABASE_URL: postgresql+asyncpg://roadguard:roadguard@db:5432/roadguard
       CORS_ORIGINS: http://localhost:5173
-      MODEL_WEIGHTS: /app/model/weights/best.pt
-      # auto = labelled DEMO detector when no weights file is mounted
+      # demo | yolo | auto (yolo when the weights file is present, otherwise the labelled DEMO detector)
       INFERENCE_MODE: ${INFERENCE_MODE:-auto}
+      # Passed through from .env when set there; otherwise the application's own defaults apply.
+      # MODEL_WEIGHTS must stay a path under model/weights/ so it is valid inside the container too.
+      MODEL_WEIGHTS:
+      INFERENCE_DEVICE:
+      CONFIDENCE_THRESHOLD:
+      INFERENCE_IMAGE_SIZE:
     ports:
       - "8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
-      - ./model:/app/model
+      # Trained weights are read from the host; nothing else in model/ is needed at runtime.
+      - ./model/weights:/app/model/weights:ro
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # Healthy once the API answers. A missing or unusable model shows as "degraded" in /health, not as an unhealthy container.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   frontend:
     build: ./frontend
