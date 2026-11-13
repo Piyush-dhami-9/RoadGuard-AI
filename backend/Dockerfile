@@ -14,6 +14,6 @@ RUN if [ "$INSTALL_MODEL_DEPS" = "true" ]; then \
 		fi
 COPY backend/app ./app
 COPY model ./model
-RUN mkdir -p uploads /app/reports/generated
+RUN mkdir -p uploads
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,29 +1,124 @@
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, BarChart3, Bell, CalendarDays, Camera, CheckCircle2, ChevronRight, CircleGauge, CloudUpload, Download, FileImage, FileText, LayoutDashboard, Menu, Moon, Search, Settings2, ShieldCheck, Sun, Trash2, TriangleAlert, UploadCloud, X } from 'lucide-react'
+import { type ComponentType, useCallback, useEffect, useState } from 'react'
+import { AlertTriangle, CalendarDays, ChevronRight, CloudUpload, LayoutDashboard, Menu, Moon, RefreshCw, ShieldCheck, Sun, TriangleAlert, X } from 'lucide-react'
+import { type Health, type Inspection, describeError, getHealth, listInspections } from './api'
+import { modeInfo } from './lib/inspections'
+import { Dashboard } from './pages/Dashboard'
+import { Detail } from './pages/Detail'
+import { History } from './pages/History'
+import { Upload } from './pages/Upload'
 
-type Damage = { id:number; class_name:string; confidence:number; area:number; length:number; width:number; severity:string; severity_score:number; bbox:Record<string,number> }
-type Inspection = { id:number; image_path:string; annotated_image_path:string|null; timestamp:string; damage_count:number; overall_severity:string; priority_score:number; damages:Damage[] }
-const API = import.meta.env.VITE_API_URL || '/api'
-const colors:Record<string,string> = { Low:'#2dbb8b', Medium:'#f2a24b', High:'#f05b62' }
+type Page = 'Dashboard' | 'Upload inspection' | 'Inspection history' | 'Inspection detail'
+const NAVIGATION: [Page, ComponentType<{ size?: number }>][] = [
+  ['Dashboard', LayoutDashboard],
+  ['Upload inspection', CloudUpload],
+  ['Inspection history', CalendarDays],
+]
 
-function App() {
-  const [page, setPage] = useState('Dashboard'); const [records, setRecords] = useState<Inspection[]>([]); const [selected, setSelected] = useState<Inspection|null>(null); const [dark, setDark] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState('')
-  const refresh = async () => { try { const response = await fetch(`${API}/inspections`); if (!response.ok) throw new Error('API unavailable'); setRecords(await response.json()); setError('') } catch { setError('Connect the backend to load live inspections.') } finally { setLoading(false) } }
-  useEffect(() => { refresh() }, [])
-  const openRecord = (record:Inspection) => { setSelected(record); setPage('Inspection detail') }
-  return <div className={dark ? 'app dark' : 'app'}>
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><ShieldCheck size={22}/></div><div><strong>RoadGuard</strong><span>AI INSPECTIONS</span></div></div><nav>{([['Dashboard',LayoutDashboard],['Upload inspection',CloudUpload],['Inspection history',CalendarDays]] as [string, React.ComponentType<{size?: number}>][]).map(([label,Icon]) => <button className={page === label ? 'nav-item active' : 'nav-item'} onClick={() => setPage(label)} key={label}><Icon size={18}/><span>{label}</span>{page === label && <ChevronRight size={15}/>}</button>)}</nav><div className="sidebar-bottom"><div className="system-status"><span className="status-dot"/>System operational<small>Model ready · v1.0.0</small></div><button className="nav-item"><Settings2 size={18}/><span>Settings</span></button></div></aside>
-    <main><header><button className="mobile-menu"><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{page}</b></div><div className="header-actions"><button className="icon-btn"><Search size={18}/></button><button className="icon-btn"><Bell size={18}/><i/></button><button className="theme-btn" onClick={() => setDark(!dark)}>{dark ? <Sun size={17}/> : <Moon size={17}/>}<span>{dark ? 'Light' : 'Dark'}</span></button><div className="avatar">JL</div></div></header>
-      <div className="content">{error && <div className="notice"><TriangleAlert size={17}/>{error}</div>}{loading ? <div className="loading">Loading inspection workspace...</div> : page === 'Dashboard' ? <Dashboard records={records} openRecord={openRecord} goUpload={() => setPage('Upload inspection')}/> : page === 'Upload inspection' ? <Upload onComplete={(record) => { setRecords([record,...records]); setSelected(record); setPage('Inspection detail') }} /> : page === 'Inspection history' ? <History records={records} openRecord={openRecord}/> : <Detail record={selected} goBack={() => setPage('Inspection history')}/>}</div>
-    </main>
-  </div>
+function SystemStatus({ health, offline }: { health: Health | null; offline: boolean }) {
+  if (offline || !health) {
+    return <div className="system-status"><span className="status-dot off" />API unreachable<small>Status unknown</small></div>
+  }
+  const info = modeInfo(health.inference_mode, health.model.model_name)
+  const healthy = health.status === 'ok'
+  return (
+    <div className="system-status" title={health.model.detail}>
+      <span className={healthy ? 'status-dot' : 'status-dot warn'} />
+      {health.database === 'ok' ? 'API online' : 'Database unavailable'}
+      <small>
+        {info.tone === 'trained' ? `Trained model · ${health.model.model_name}` : info.tone === 'demo' ? 'DEMO mode · no trained model' : 'Trained model unavailable'}
+      </small>
+    </div>
+  )
 }
 
-function Dashboard({records, openRecord, goUpload}:{records:Inspection[];openRecord:(r:Inspection)=>void;goUpload:()=>void}) { const high = records.filter(r=>r.overall_severity==='High').length; const avg = records.length ? Math.round(records.reduce((a,r)=>a+r.priority_score,0)/records.length) : 0; const totalDamage = records.reduce((a,r)=>a+r.damage_count,0); const distribution = ['Pothole','Longitudinal Crack','Transverse Crack','Alligator Crack'].map(name => ({name, count:records.flatMap(r=>r.damages).filter(d=>d.class_name===name).length})); return <><section className="page-intro"><div><div className="eyebrow">FIELD OPERATIONS / OVERVIEW</div><h1>Good morning, Jordan<span>.</span></h1><p>Here is the latest read on your road network.</p></div><button className="primary-btn" onClick={goUpload}><UploadCloud size={17}/> New inspection</button></section><section className="kpis"><Kpi icon={<FileImage/>} label="Total inspections" value={records.length.toString()} note="All time"/><Kpi icon={<AlertTriangle/>} label="High severity" value={high.toString()} note="Needs attention" tone="red"/><Kpi icon={<CircleGauge/>} label="Average priority" value={`${avg}/100`} note="Across inspections" tone="orange"/><Kpi icon={<Activity/>} label="Damage found" value={totalDamage.toString()} note="Detected issues" tone="green"/></section><div className="grid-two"><section className="panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">DISTRIBUTION</span><h2>Damage frequency</h2></div><button className="select-btn">This year <ChevronRight size={14}/></button></div><div className="bars">{distribution.map((item,index)=><div className="bar-row" key={item.name}><span>{item.name.replace(' Crack','')}</span><div className="bar-track"><div className={`bar bar-${index}`} style={{width:`${Math.max(8, Math.min(100, item.count*18+8))}%`}}/></div><b>{item.count}</b></div>)}</div><div className="chart-axis"><span>0</span><span>5</span><span>10</span><span>15</span><span>20</span></div></section><section className="panel severity-panel"><div className="panel-heading"><div><span className="eyebrow">RISK PROFILE</span><h2>Severity split</h2></div><BarChart3 size={18} className="muted"/></div><div className="donut-wrap"><div className="donut" style={{background:`conic-gradient(${colors.High} 0 18%, ${colors.Medium} 18% 47%, ${colors.Low} 47% 100%)`}}><div><strong>{records.length}</strong><span>cases</span></div></div><div className="legend"><Legend color={colors.High} label="High" value={high}/><Legend color={colors.Medium} label="Medium" value={records.filter(r=>r.overall_severity==='Medium').length}/><Legend color={colors.Low} label="Low" value={records.filter(r=>r.overall_severity==='Low').length}/></div></div></section></div><section className="panel recent"><div className="panel-heading"><div><span className="eyebrow">LIVE FEED</span><h2>Recent inspections</h2></div><button className="text-btn" onClick={()=>{}}>View history <ArrowUpRight size={15}/></button></div><InspectionTable records={records.slice(0,5)} openRecord={openRecord}/></section></> }
-function Kpi({icon,label,value,note,tone='blue'}:{icon:React.ReactNode;label:string;value:string;note:string;tone?:string}) { return <div className="kpi"><div className={`kpi-icon ${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div><ArrowUpRight size={16} className="kpi-arrow"/></div> }
-function Legend({color,label,value}:{color:string;label:string;value:number}) { return <div><i style={{background:color}}/><span>{label}</span><b>{value}</b></div> }
-function InspectionTable({records,openRecord}:{records:Inspection[];openRecord:(r:Inspection)=>void}) { return <div className="table-wrap"><table><thead><tr><th>Inspection</th><th>Date</th><th>Damage found</th><th>Severity</th><th>Priority</th><th/></tr></thead><tbody>{records.length === 0 ? <tr><td colSpan={6} className="empty">No inspections yet. Upload a road image to begin.</td></tr> : records.map(r=><tr key={r.id}><td><div className="inspection-id"><div className="thumb"><FileImage size={15}/></div><div><b>RG-{String(r.id).padStart(4,'0')}</b><span>Road survey</span></div></div></td><td>{new Date(r.timestamp).toLocaleDateString()}</td><td>{r.damage_count} {r.damage_count===1?'issue':'issues'}</td><td><span className={`pill ${r.overall_severity.toLowerCase()}`}><i/> {r.overall_severity}</span></td><td><div className="priority"><b>{Math.round(r.priority_score)}</b><div><span style={{width:`${r.priority_score}%`}}/></div></div></td><td><button className="row-btn" onClick={()=>openRecord(r)}>View <ArrowUpRight size={14}/></button></td></tr>)}</tbody></table></div> }
-function History({records,openRecord}:{records:Inspection[];openRecord:(r:Inspection)=>void}) { return <><section className="page-intro"><div><div className="eyebrow">RECORDS / ARCHIVE</div><h1>Inspection history<span>.</span></h1><p>Review, export, and manage every road survey.</p></div><div className="intro-actions"><button className="secondary-btn"><Download size={16}/> Export CSV</button></div></section><section className="panel history-panel"><div className="filter-row"><div className="search-field"><Search size={17}/><input placeholder="Search inspections..."/></div><button className="select-btn">All severity <ChevronRight size={14}/></button><button className="select-btn">Newest first <ChevronRight size={14}/></button></div><InspectionTable records={records} openRecord={openRecord}/></section></> }
-function Upload({onComplete}:{onComplete:(r:Inspection)=>void}) { const input=useRef<HTMLInputElement>(null); const [file,setFile]=useState<File|null>(null); const [preview,setPreview]=useState(''); const [busy,setBusy]=useState(false); const [message,setMessage]=useState(''); const choose=(selected:File)=>{setFile(selected);setPreview(URL.createObjectURL(selected));setMessage('')}; const drop=(event:DragEvent)=>{event.preventDefault();const dropped=event.dataTransfer.files[0];if(dropped)choose(dropped)}; const analyze=async()=>{if(!file)return;setBusy(true);try{const form=new FormData();form.append('file',file);const response=await fetch(`${API}/detect`,{method:'POST',body:form});if(!response.ok)throw new Error('Analysis failed');onComplete(await response.json())}catch{setMessage('Analysis could not be completed. Check that the backend is running.')}finally{setBusy(false)}}; return <><section className="page-intro"><div><div className="eyebrow">NEW ANALYSIS / COMPUTER VISION</div><h1>Inspect a road<span>.</span></h1><p>Upload a clear road image and let RoadGuard measure the risk.</p></div></section><section className="upload-layout"><div className="panel upload-panel"><div className="panel-heading"><div><span className="eyebrow">STEP 01</span><h2>Choose an image</h2></div><span className="format-note">JPG, PNG up to 10MB</span></div><div className={preview ? 'dropzone has-preview' : 'dropzone'} onDragOver={e=>e.preventDefault()} onDrop={drop} onClick={()=>input.current?.click()}>{preview ? <img src={preview} alt="Road preview"/> : <><div className="upload-icon"><CloudUpload size={25}/></div><strong>Drop a road image here</strong><span>or browse from your device</span></>}<input ref={input} type="file" accept="image/*" hidden onChange={(e:ChangeEvent<HTMLInputElement>)=>e.target.files?.[0]&&choose(e.target.files[0])}/></div>{file && <div className="file-row"><FileImage size={17}/><div><b>{file.name}</b><span>{(file.size/1024/1024).toFixed(2)} MB ready for analysis</span></div><button onClick={()=>{setFile(null);setPreview('')}}><X size={16}/></button></div>}{message&&<div className="form-error">{message}</div>}<button className="primary-btn analyze-btn" disabled={!file||busy} onClick={analyze}>{busy ? <><Activity size={17} className="spin"/> Analyzing image...</> : <><Camera size={17}/> Run AI inspection</>}</button></div><div className="analysis-info"><div className="info-card"><div className="mini-icon blue"><ShieldCheck size={18}/></div><div><b>Segmentation overlay</b><p>See exactly where damage appears on the road surface.</p></div></div><div className="info-card"><div className="mini-icon orange"><CircleGauge size={18}/></div><div><b>Severity intelligence</b><p>Area, width, and length measurements become a repair score.</p></div></div><div className="info-card"><div className="mini-icon green"><FileText size={18}/></div><div><b>Report ready</b><p>Download a shareable PDF when your analysis is complete.</p></div></div></div></section></> }
-function Detail({record,goBack}:{record:Inspection|null;goBack:()=>void}) { if(!record)return <div className="empty-detail"><FileImage size={32}/><h2>Select an inspection</h2><button className="primary-btn" onClick={goBack}>Back to history</button></div>; const image = record.annotated_image_path ? `${API.replace('/api','')}/${record.annotated_image_path}` : ''; return <><section className="page-intro"><div><button className="back-btn" onClick={goBack}>← Back to history</button><div className="eyebrow">INSPECTION RG-{String(record.id).padStart(4,'0')}</div><h1>Inspection details<span>.</span></h1><p>{new Date(record.timestamp).toLocaleString()} · AI segmentation analysis</p></div><button className="secondary-btn" onClick={()=>window.open(`${API}/report/${record.id}`,'_blank')}><Download size={16}/> Download report</button></section><section className="detail-grid"><div className="panel image-panel"><div className="panel-heading"><div><span className="eyebrow">ANNOTATED OUTPUT</span><h2>Surface map</h2></div><span className="pill ready"><i/> Analysis complete</span></div>{image ? <img className="annotated" src={image} alt="Annotated road"/> : <div className="image-placeholder"><FileImage size={30}/><span>Annotated image available after analysis</span></div>}</div><div className="panel summary-panel"><span className="eyebrow">RISK SUMMARY</span><div className="score"><strong>{Math.round(record.priority_score)}</strong><span>/ 100<br/>priority</span></div><div className={`severity-callout ${record.overall_severity.toLowerCase()}`}><AlertTriangle size={18}/><div><b>{record.overall_severity} severity</b><span>{record.overall_severity==='High'?'Immediate Repair':record.overall_severity==='Medium'?'Schedule Repair':'Monitor'}</span></div></div><div className="summary-stat"><span>Detected issues</span><b>{record.damage_count}</b></div><div className="summary-stat"><span>Confidence average</span><b>{record.damages.length ? Math.round(record.damages.reduce((a,d)=>a+d.confidence,0)/record.damages.length*100):0}%</b></div></div></section><section className="panel damage-list"><div className="panel-heading"><div><span className="eyebrow">DETECTION BREAKDOWN</span><h2>Detected damage</h2></div></div><div className="damage-cards">{record.damages.map(d=><div className="damage-card" key={d.id}><div className="damage-top"><div className="damage-symbol"><TriangleAlert size={17}/></div><div><b>{d.class_name}</b><span>{Math.round(d.confidence*100)}% confidence</span></div><span className={`pill ${d.severity.toLowerCase()}`}><i/> {d.severity}</span></div><div className="measurements"><div><span>Surface area</span><b>{Math.round(d.area)} px²</b></div><div><span>Length</span><b>{Math.round(d.length)} px</b></div><div><span>Avg width</span><b>{Math.round(d.width)} px</b></div></div></div>)}</div></section></> }
+function App() {
+  const [page, setPage] = useState<Page>('Dashboard')
+  const [records, setRecords] = useState<Inspection[]>([])
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [health, setHealth] = useState<Health | null>(null)
+  const [dark, setDark] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [navOpen, setNavOpen] = useState(false)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    const [healthResult, recordsResult] = await Promise.allSettled([getHealth(), listInspections()])
+    setHealth(healthResult.status === 'fulfilled' ? healthResult.value : null)
+    if (recordsResult.status === 'fulfilled') {
+      setRecords(recordsResult.value)
+      setError('')
+    } else {
+      setError(describeError(recordsResult.reason))
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const go = (target: Page) => { setPage(target); setNavOpen(false) }
+  const openRecord = (record: Inspection) => { setSelectedId(record.id); go('Inspection detail') }
+  const selected = records.find((record) => record.id === selectedId) ?? null
+  const mode = health?.inference_mode
+
+  return (
+    <div className={dark ? 'app dark' : 'app'}>
+      <aside className={navOpen ? 'sidebar open' : 'sidebar'} id="primary-navigation">
+        <div className="brand">
+          <div className="brand-mark"><ShieldCheck size={22} /></div>
+          <div><strong>RoadGuard</strong><span>ROAD INSPECTIONS</span></div>
+        </div>
+        <nav aria-label="Primary">
+          {NAVIGATION.map(([label, Icon]) => (
+            <button className={page === label ? 'nav-item active' : 'nav-item'} onClick={() => go(label)} key={label} aria-current={page === label ? 'page' : undefined}>
+              <Icon size={18} /><span>{label}</span>{page === label && <ChevronRight size={15} />}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-bottom"><SystemStatus health={health} offline={Boolean(error)} /></div>
+      </aside>
+      {navOpen && <div className="nav-backdrop" onClick={() => setNavOpen(false)} />}
+      <main>
+        <header>
+          <button className="mobile-menu" onClick={() => setNavOpen(!navOpen)} aria-label={navOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={navOpen} aria-controls="primary-navigation">
+            {navOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+          <div className="crumb"><span>Workspace</span><ChevronRight size={14} /><b>{page}</b></div>
+          <div className="header-actions">
+            <button className="theme-btn" onClick={() => setDark(!dark)}>
+              {dark ? <Sun size={17} /> : <Moon size={17} />}<span>{dark ? 'Light' : 'Dark'}</span>
+            </button>
+          </div>
+        </header>
+        <div className="content">
+          {mode === 'demo' && (
+            <div className="banner demo" role="status">
+              <AlertTriangle size={17} />
+              <span><b>DEMO MODE.</b> No trained model is installed. New inspections use a brightness-threshold placeholder and are not AI predictions.</span>
+            </div>
+          )}
+          {mode === 'unavailable' && (
+            <div className="banner unavailable" role="alert">
+              <AlertTriangle size={17} />
+              <span><b>MODEL UNAVAILABLE.</b> New inspections are disabled. {health?.model.detail}</span>
+            </div>
+          )}
+          {error && (
+            <div className="notice" role="alert">
+              <TriangleAlert size={17} />
+              <span>{error}</span>
+              <button className="text-btn" onClick={refresh}><RefreshCw size={14} /> Retry</button>
+            </div>
+          )}
+          {loading ? <div className="loading" role="status">Loading inspection workspace...</div>
+            : page === 'Dashboard' ? <Dashboard records={records} openRecord={openRecord} goUpload={() => go('Upload inspection')} goHistory={() => go('Inspection history')} />
+            : page === 'Upload inspection' ? <Upload health={health} onComplete={(record) => { setRecords((current) => [record, ...current]); openRecord(record) }} />
+            : page === 'Inspection history' ? <History records={records} openRecord={openRecord} />
+            : <Detail key={selectedId} inspectionId={selectedId} initial={selected} goBack={() => go('Inspection history')} onDeleted={(id) => { setRecords((current) => current.filter((record) => record.id !== id)); setSelectedId(null); go('Inspection history') }} />}
+        </div>
+      </main>
+    </div>
+  )
+}
+
 export default App

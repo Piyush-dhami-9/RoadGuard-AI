@@ -23,11 +23,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://roadguard:roadguard@db:5432/roadguard
       CORS_ORIGINS: http://localhost:5173
       MODEL_WEIGHTS: /app/model/weights/best.pt
+      # auto = labelled DEMO detector when no weights file is mounted
+      INFERENCE_MODE: ${INFERENCE_MODE:-auto}
     ports:
       - "8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
-      - ./reports/generated:/app/reports/generated
       - ./model:/app/model
     depends_on:
       db:

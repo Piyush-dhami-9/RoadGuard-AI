@@ -8,6 +8,38 @@ The app is deployed to Azure Container Apps in East Asia:
 - API: https://roadguard-backend.ashypebble-8c6b3da9.eastasia.azurecontainerapps.io
 - API docs: https://roadguard-backend.ashypebble-8c6b3da9.eastasia.azurecontainerapps.io/docs
 
+### Access is restricted (since 2026-11-13)
+
+The API has no authentication yet, so both container apps accept traffic from
+one IP address only (ingress rule `owner-only`). Everyone else receives HTTP 403.
+The deployed application itself is unchanged and still runs the old image.
+
+If your IP address changes you will be locked out too. Update the rule:
+
+```bash
+az containerapp ingress access-restriction set -g roadguard-rg-eastasia -n roadguard-backend \
+  --rule-name owner-only --ip-address <your-ip>/32 --action Allow
+az containerapp ingress access-restriction set -g roadguard-rg-eastasia -n roadguard-frontend \
+  --rule-name owner-only --ip-address <your-ip>/32 --action Allow
+```
+
+To reopen the site to everyone (do this only once authentication is in place):
+
+```bash
+az containerapp ingress access-restriction remove -g roadguard-rg-eastasia -n roadguard-backend --rule-name owner-only
+az containerapp ingress access-restriction remove -g roadguard-rg-eastasia -n roadguard-frontend --rule-name owner-only
+```
+
+`infra/main.bicep` does not contain this rule, so running the deploy script may
+remove it. Do not redeploy until authentication ships or the rule is added to the template.
+
+### Before the next deployment
+
+The code in this repository is ahead of the deployed image. The next image
+applies database migrations at startup (existing rows are kept), and needs
+`INFERENCE_MODE=demo` set explicitly if it is to keep serving demo results with
+`APP_ENV=production`. Uploaded images still live on ephemeral container disk.
+
 Redeploy with `./scripts/deploy-azure.sh`. Resource names are pinned in
 `.azure/deploy.env` so a rerun updates the same resources. See
 `.azure/summary.copilotmd` for the full inventory and follow-ups.
@@ -63,8 +95,8 @@ The API is served on:
 6. Set environment variables for:
    - `DATABASE_URL`
    - `CORS_ORIGINS`
-   - `VITE_API_URL`
    - `MODEL_WEIGHTS`
+   - `APP_ENV`, `INFERENCE_MODE`
 7. Configure ingress and secret references.
 
 ### Azure CLI example
@@ -91,13 +123,14 @@ Set these in production:
 ```env
 DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>:5432/roadguard
 CORS_ORIGINS=https://<frontend-domain>
-VITE_API_URL=https://<backend-domain>
 MODEL_WEIGHTS=/app/model/weights/best.pt
+APP_ENV=production
+INFERENCE_MODE=trained   # or demo, deliberately; production never falls back silently
 ```
 
 ## Notes
 
-- The app already contains a demo fallback for inference when no model weights are present.
-- The YOLO weights are required for production-grade detection quality.
-- The app will run without the trained model, but accuracy will be limited to the OpenCV demo detector.
-
+- `VITE_API_URL` is a build-time argument of the frontend image, not a runtime variable.
+- Without trained weights the API serves the DEMO placeholder detector only when
+  `INFERENCE_MODE=demo` is set (or outside production). Demo results are labelled and are not AI predictions.
+- If weights are supplied but cannot be loaded, the API reports the model as unavailable; it does not fall back to demo output.
