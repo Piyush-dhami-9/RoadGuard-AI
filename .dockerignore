@@ -19,3 +19,10 @@ model/weights
 .github
 docs
 reports
+# Training-only material: never part of an application image
+datasets
+runs
+model/training
+model/tests
+model/configs
+model/requirements-train.txt
