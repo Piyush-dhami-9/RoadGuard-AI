@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+.azure/azcli-venv/
+.azure/postgres-admin-password
+*.pem
+*.key
+
+# Runtime data: uploads, reports, databases, dumps
+uploads/
+reports/generated/
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+*.dump
+*.bak
+
+# Model weights, datasets and training output
+model/weights/*
+!model/weights/.gitkeep
+*.pt
+*.onnx
+datasets/
+runs/
+
+# OS / editor
+.DS_Store
+.idea/

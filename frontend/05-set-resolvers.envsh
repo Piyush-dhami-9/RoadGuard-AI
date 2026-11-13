@@ -1,0 +1,8 @@
+#!/bin/sh
+# Export the container's DNS servers so the nginx config template can set a
+# resolver. Needed because the API upstream is resolved at request time.
+NGINX_RESOLVERS="$(awk '/^nameserver/ { if ($2 !~ /:/) printf "%s ", $2 }' /etc/resolv.conf)"
+if [ -z "$NGINX_RESOLVERS" ]; then
+  NGINX_RESOLVERS="127.0.0.11"
+fi
+export NGINX_RESOLVERS
