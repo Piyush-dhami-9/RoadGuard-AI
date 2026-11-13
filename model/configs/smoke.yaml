@@ -1,0 +1,19 @@
+# Smoke test: proves that data loading, training, checkpointing and evaluation
+# run end to end on a small subset. Sized for an Apple M1 with 8 GB RAM.
+# The resulting weights are NOT a trained model and are never exported.
+name: smoke
+smoke_test: true
+model: yolo11n.pt
+data: datasets/rdd2022/smoke/data.yaml
+epochs: 2
+imgsz: 320
+batch: 4
+workers: 0                   # no loader subprocesses: lowest memory use
+device: auto
+patience: 0
+seed: 0
+project: runs/rdd2022
+extra:
+  cache: false
+  plots: false
+  exist_ok: true             # reuse runs/rdd2022/smoke instead of smoke2, smoke3, ...

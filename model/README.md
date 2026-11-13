@@ -1,13 +1,19 @@
 # RoadGuard model
 
-**No trained model exists yet.** `model/weights/` is empty and weights files are git-ignored.
+**No trained model exists yet.** Weights files are git-ignored and none ship with the repository.
 
-Without weights the backend runs the DEMO detector (`opencv-threshold-demo`): it thresholds dark pixels and assigns damage classes by position in a list. It exists so the workflow can be exercised end to end. Its output is labelled DEMO everywhere and must not be used for decisions.
+| Path | Purpose |
+| --- | --- |
+| `training/` | Dataset fetch and preparation, training and evaluation scripts for YOLO11 **detection** on RDD2022 |
+| `configs/` | Training configs: `rdd2022_yolo11n.yaml` (full run) and `smoke.yaml` (pipeline check) |
+| `tests/` | Tests for class mapping, dataset conversion, splitting and script guard rails |
+| `weights/roadguard-yolo11-rdd2022.pt` | Where a full training run saves its best model (with a `.json` describing the run) |
+| `weights/pretrained/` | Downloaded starting checkpoints; not road-damage models |
 
-## Supplying weights
+How to use all of this: [docs/MODEL_TRAINING.md](../docs/MODEL_TRAINING.md).
 
-Place weights at `model/weights/best.pt` (or set `MODEL_WEIGHTS`) and install `ultralytics` (Docker: build with `--build-arg INSTALL_MODEL_DEPS=true`). If the file is present but cannot be loaded, the API reports the model as unavailable and `/detect` returns 503; it does not fall back to demo output.
+## What the application runs today
 
-## Current limitation
+Without usable weights the backend runs the DEMO detector (`opencv-threshold-demo`): it thresholds dark pixels and assigns damage classes by position in a list. It exists so the workflow can be exercised end to end. Its output is labelled DEMO everywhere and must not be used for decisions.
 
-The trained-model code path still expects YOLO **segmentation** weights with the class order Pothole, Longitudinal Crack, Transverse Crack, Alligator Crack. Detection weights are refused at startup with an explanatory message. The planned dataset, RDD2022, has bounding boxes only, so the next phase converts this path to YOLO11 detection and reads class names from the model. No training pipeline, dataset or evaluation metrics exist in this repository yet.
+The backend's trained-model path still expects YOLO **segmentation** weights and refuses detection weights at startup with an explanatory message. Converting that path to detection, and reading class names from the model, is the remaining part of Phase 3. Until then, do not point `MODEL_WEIGHTS` at the detection weights: in `auto` mode the API would report the model as unavailable instead of running the demo.

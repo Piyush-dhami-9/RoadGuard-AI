@@ -39,8 +39,10 @@ model/weights/*
 !model/weights/.gitkeep
 *.pt
 *.onnx
-datasets/
+datasets/*
+!datasets/README.md
 runs/
+*.cache
 
 # OS / editor
 .DS_Store

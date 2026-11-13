@@ -1,0 +1,15 @@
+# Baseline training run: YOLO11-nano object detection on the prepared RDD2022 dataset.
+# Intended for a machine with a GPU (for example a hosted notebook). On an 8 GB
+# Apple M1 use smoke.yaml to check the pipeline; a full run there is impractical.
+name: rdd2022-yolo11n
+model: yolo11n.pt            # detection checkpoint; yolo11s.pt is the next size up
+data: datasets/rdd2022/processed/data.yaml
+epochs: 100
+imgsz: 640
+batch: 16
+workers: 4
+device: auto                 # CUDA if present, else Apple MPS, else CPU
+patience: 20                 # stop when validation has not improved for this many epochs
+seed: 0
+project: runs/rdd2022
+export_to: model/weights/roadguard-yolo11-rdd2022.pt

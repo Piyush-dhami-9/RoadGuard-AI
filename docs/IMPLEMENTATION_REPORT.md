@@ -138,4 +138,58 @@ Removed: `reports/.gitkeep` (reports are no longer written to disk).
 
 ### Next phase
 
-Phase 3: convert the trained path to YOLO11 detection, read class names from the model, add device selection and thresholds, and build the RDD2022 conversion, training and evaluation scripts. The real training run needs a hosted GPU; the development Mac is for smoke tests only.
+See Phase 3 below.
+
+## Phase 3, part 1 — Dataset preparation and training pipeline (2026-11-13, branch `phase-3-yolo11`)
+
+### Outcome
+
+A YOLO11 **detection** pipeline for RDD2022 exists: fetch, prepare, train, evaluate. It has been run end to end as a smoke test on real data. **No model has been trained and there are no accuracy figures.** The application is unchanged and still runs the DEMO detector.
+
+### What was added
+
+| Path | Purpose |
+| --- | --- |
+| `model/training/classes.py` | The four classes in RDD2022 order (D00, D10, D20, D40) with the names the app displays |
+| `model/training/voc.py` | Pascal VOC parsing, box validation, conversion to YOLO format |
+| `model/training/splits.py` | Group-based train/val/test split to limit leakage |
+| `model/training/prepare_rdd2022.py` | Dataset preparation with a full issue report |
+| `model/training/fetch_rdd2022.py` | Downloads chosen countries from the figshare archive without fetching all 13 GB |
+| `model/training/train.py`, `evaluate.py`, `common.py` | Training, evaluation (precision, recall, mAP50, mAP50-95), device detection, guards |
+| `model/configs/` | Full-run and smoke-test configs |
+| `model/tests/` | 93 tests |
+| `docs/MODEL_TRAINING.md`, `datasets/README.md` | Documentation |
+
+`.gitignore` now keeps datasets, runs, label caches and weights out of Git (only `datasets/README.md` is tracked). No backend, frontend, database or Docker file was changed. A matching `.dockerignore` update, which keeps `datasets/` and `runs/` out of image build contexts, is pending as a separate change.
+
+### Tests executed
+
+| Suite | Command | Result |
+| --- | --- | --- |
+| Model pipeline | `python -m pytest model/tests` | **93 passed** |
+| Backend (unchanged code) | `python -m pytest` in `backend/` | **46 passed** |
+| Frontend (unchanged code) | `npm test` in `frontend/` | **34 passed** |
+
+Runs on real data (development M1, 8 GB, Ultralytics 8.3.55, PyTorch 2.15.0):
+
+| Step | Result |
+| --- | --- |
+| Fetch Czech (257 MB) | 2,829 annotation files and 3,538 images, matching the official file list |
+| Prepare Czech | 2,829 images, 1,745 boxes (D00 988, D10 399, D20 161, D40 197), 1,757 images with no supported damage, 709 unlabelled test images ignored, no issues reported, 7 seconds |
+| Smoke subset | 200 images with damage, split 163 / 18 / 19 |
+| Smoke training | completed on `mps` in 69 seconds, `best.pt` written, not exported |
+| Smoke evaluation | completed; all metrics 0.000, as expected after 2 epochs on 163 images |
+
+The smoke-test numbers are not model results and are recorded here only as evidence that the pipeline executes.
+
+### Not done or not verified
+
+- **No full training run.** It needs a GPU machine.
+- **Only the Czech subset has been through preparation.** The other six country sets are untested against the script.
+- **CUDA has not been exercised**; only Apple MPS.
+- **The backend cannot load detection weights yet.** Its trained path still assumes segmentation and refuses detection weights. This is the next step.
+- The leakage control is a heuristic; see `docs/MODEL_TRAINING.md`.
+
+### Next
+
+Convert the backend inference path to YOLO11 detection (boxes, class names read from the model, confidence threshold, device detection), keeping the DEMO detector until that path is tested with real weights. Then severity (Phase 4).

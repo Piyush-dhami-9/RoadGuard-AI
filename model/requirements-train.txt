@@ -1,0 +1,4 @@
+# Dataset preparation, training and evaluation. Not needed to run the application.
+# Same Ultralytics version as backend/requirements.txt, so weights load identically in both.
+ultralytics==8.3.55
+pytest==8.3.4

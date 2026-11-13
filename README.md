@@ -40,6 +40,7 @@ The dev server forwards `/api` to `http://localhost:8000`. If the backend runs e
 cd backend && python -m pytest        # API, uploads, model modes, reports, migrations (uses SQLite, no services needed)
 cd frontend && npm test               # upload workflow, errors, history, report download
 cd frontend && npm run build          # type-check and production build
+python -m pytest model/tests           # dataset conversion, class mapping, training guard rails (needs model/requirements-train.txt)
 ```
 
 ## Inference modes
@@ -82,6 +83,7 @@ Supplied weights that fail to load are never replaced by demo output. `GET /heal
 - `backend/app`: FastAPI routes (`main.py`), services (`services/`), models, migrations (`migrations/`)
 - `backend/tests`: pytest suite
 - `frontend/src`: React + TypeScript app (`pages/`, `components/`, `lib/`, `api.ts`)
-- `model`: weights location and model notes
+- `model`: YOLO11 detection training pipeline (`training/`, `configs/`, `tests/`) and the weights location; see [docs/MODEL_TRAINING.md](docs/MODEL_TRAINING.md)
+- `datasets`: where RDD2022 is placed and prepared (not tracked)
 - `infra`, `scripts`, `DEPLOYMENT.md`: Azure Container Apps deployment
 - `docs`: audit, implementation report, architecture
