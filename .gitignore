@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
 venv/
 .pytest_cache/
 .mypy_cache/
@@ -30,7 +31,7 @@ reports/generated/
 *.db
 *.sqlite
 *.sqlite3
-*.sql
+*.sql.gz
 *.dump
 *.bak
 
